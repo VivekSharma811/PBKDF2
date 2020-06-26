@@ -1,405 +1,164 @@
-/*
- * A free Java implementation of Password Based Key Derivation Function 2 as
- * defined by RFC 2898. Copyright 2007, 2014, Matthias G&auml;rtner
- *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
- */
-
 package de.rtner.security.auth.spi;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.util.Arrays;
 
-/**
- * This <b>Password Based Key Derivation Function 2</b> implementation.
- * <hr>
- * Request for Comments: 2898 PKCS #5: Password-Based Cryptography Specification
- * <p>
- * Version 2.0
- *
- * <p>
- * PBKDF2 (P, S, c, dkLen)
- *
- * <p>
- * Options:
- * <ul>
- * <li>PRF underlying pseudorandom function (hLen denotes the length in octets
- * of the pseudorandom function output). PRF is pluggable.</li>
- * </ul>
- *
- * <p>
- * Input:
- * <ul>
- * <li>P password, an octet string</li>
- * <li>S salt, an octet string</li>
- * <li>c iteration count, a positive integer</li>
- * <li>dkLen intended length in octets of the derived key, a positive integer,
- * at most (2^32 - 1) * hLen</li>
- * </ul>
- *
- * <p>
- * Output:
- * <ul>
- * <li>DK derived key, a dkLen-octet string</li>
- * </ul>
- *
- * @see <a href="http://tools.ietf.org/html/rfc2898">RFC 2898</a>
- * @author Matthias G&auml;rtner
- */
-public class PBKDF2Engine implements PBKDF2
-{
-    protected PBKDF2Parameters parameters;
-
-    protected PRF prf;
-
-    /**
-     * Constructor for PBKDF2 implementation object. PBKDF2 parameters must be
-     * passed later.
-     */
-    public PBKDF2Engine()
-    {
-        this.parameters = null;
-        prf = null;
-    }
-
-    /**
-     * Constructor for PBKDF2 implementation object. PBKDF2 parameters are
-     * passed so that this implementation knows iteration count, method to use
-     * and String encoding.
-     *
-     * @param parameters
-     *            Data holder for iteration count, method to use et cetera.
-     */
-    public PBKDF2Engine(PBKDF2Parameters parameters)
-    {
-        this.parameters = parameters;
-        prf = null;
-    }
-
-    /**
-     * Constructor for PBKDF2 implementation object. PBKDF2 parameters are
-     * passed so that this implementation knows iteration count, method to use
-     * and String encoding.
-     *
-     * @param parameters
-     *            Data holder for iteration count, method to use et cetera.
-     * @param prf
-     *            Supply customer Pseudo Random Function.
-     */
-    public PBKDF2Engine(PBKDF2Parameters parameters, PRF prf)
-    {
-        this.parameters = parameters;
-        this.prf = prf;
-    }
-
-    public byte[] deriveKey(String inputPassword)
-    {
-        return deriveKey(inputPassword, 0);
-    }
-
-    public byte[] deriveKey(String inputPassword, int dkLen)
-    {
-        byte[] r = null;
-        byte P[] = null;
-        String charset = parameters.getHashCharset();
-        if (inputPassword == null)
-        {
-            inputPassword = "";
-        }
-        try
-        {
-            if (charset == null)
-            {
-                P = inputPassword.getBytes();
-            }
-            else
-            {
-                P = inputPassword.getBytes(charset);
-            }
-        }
-        catch (UnsupportedEncodingException e)
-        {
-            throw new RuntimeException(e);
-        }
-        assertPRF(P);
-        if (dkLen == 0)
-        {
-            dkLen = prf.getHLen();
-        }
-        r = PBKDF2(prf, parameters.getSalt(), parameters.getIterationCount(),
-                dkLen);
-        return r;
-    }
-
-    public boolean verifyKey(String inputPassword)
-    {
-        byte[] referenceKey = getParameters().getDerivedKey();
-        if (referenceKey == null || referenceKey.length == 0)
-        {
-            return false;
-        }
-        byte[] inputKey = deriveKey(inputPassword, referenceKey.length);
-
-        if (inputKey == null || inputKey.length != referenceKey.length)
-        {
-            return false;
-        }
-        int z = 0;
-        for (int i = 0; i < inputKey.length; i++)
-        {
-            z |= (inputKey[i] ^ referenceKey[i]);
-        }
-        return (z == 0);
-    }
-
-    /**
-     * Factory method. Default implementation is (H)MAC-based. To be overridden
-     * in derived classes.
-     *
-     * @param P
-     *            User-supplied candidate password as array of bytes.
-     */
-    protected void assertPRF(byte[] P)
-    {
-        if (prf == null)
-        {
-            prf = new MacBasedPRF(parameters.getHashAlgorithm());
-        }
-        prf.init(P);
-    }
-
-    public PRF getPseudoRandomFunction()
-    {
-        return prf;
-    }
-
-    /**
-     * Core Password Based Key Derivation Function 2.
-     *
-     * @see <a href="http://tools.ietf.org/html/rfc2898">RFC 2898 5.2</a>
-     * @param prf
-     *            Pseudo Random Function (i.e. HmacSHA1)
-     * @param S
-     *            Salt as array of bytes. <code>null</code> means no salt.
-     * @param c
-     *            Iteration count (see RFC 2898 4.2)
-     * @param dkLen
-     *            desired length of derived key.
-     * @return internal byte array
-     */
-    protected byte[] PBKDF2(PRF prf, byte[] S, int c, int dkLen)
-    {
-        if (S == null)
-        {
-            S = new byte[0];
-        }
-        int hLen = prf.getHLen();
-        int l = ceil(dkLen, hLen);
-        int r = dkLen - (l - 1) * hLen;
-        byte T[] = new byte[l * hLen];
-        int ti_offset = 0;
-        for (int i = 1; i <= l; i++)
-        {
-            _F(T, ti_offset, prf, S, c, i);
-            ti_offset += hLen;
-        }
-        if (r < hLen)
-        {
-            // Incomplete last block
-            byte DK[] = new byte[dkLen];
-            System.arraycopy(T, 0, DK, 0, dkLen);
-            return DK;
-        }
-        return T;
-    }
-
-    /**
-     * Integer division with ceiling function.
-     *
-     * @see <a href="http://tools.ietf.org/html/rfc2898">RFC 2898 5.2 Step 2.</a>
-     * @param a Numerator
-     * @param b Denominator
-     * @return ceil(a/b)
-     */
-    protected int ceil(int a, int b)
-    {
-        int m = 0;
-        if (a % b > 0)
-        {
-            m = 1;
-        }
-        return a / b + m;
-    }
-
-    /**
-     * Function F.
-     *
-     * @see <a href="http://tools.ietf.org/html/rfc2898">RFC 2898 5.2 Step 3.</a>
-     * @param dest
-     *            Destination byte buffer
-     * @param offset
-     *            Offset into destination byte buffer
-     * @param prf
-     *            Pseudo Random Function
-     * @param S
-     *            Salt as array of bytes
-     * @param c
-     *            Iteration count
-     * @param blockIndex
-     *            The block index (&gt;= 1).
-     */
-    protected void _F(byte[] dest, int offset, PRF prf, byte[] S, int c,
-            int blockIndex)
-    {
-        int hLen = prf.getHLen();
-        byte U_r[] = new byte[hLen];
-
-        // U0 = S || INT (i);
-        byte U_i[] = new byte[S.length + 4];
-        System.arraycopy(S, 0, U_i, 0, S.length);
-        INT(U_i, S.length, blockIndex);
-
-        for (int i = 0; i < c; i++)
-        {
-            U_i = prf.doFinal(U_i);
-            xor(U_r, U_i);
-        }
-        System.arraycopy(U_r, 0, dest, offset, hLen);
-    }
-
-    /**
-     * Block-Xor. Xor source bytes into destination byte buffer. Destination
-     * buffer must be same length or less than source buffer.
-     *
-     * @param dest destination byte buffer
-     * @param src source bytes
-     */
-    protected void xor(byte[] dest, byte[] src)
-    {
-        for (int i = 0; i < dest.length; i++)
-        {
-            dest[i] ^= src[i];
-        }
-    }
-
-    /**
-     * Four-octet encoding of the integer i, most significant octet first.
-     *
-     * @see <a href="http://tools.ietf.org/html/rfc2898">RFC 2898 5.2 Step 3.</a>
-     * @param dest destination byte buffer
-     * @param offset zero-based offset into dest
-     * @param i the integer to encode
-     */
-    protected void INT(byte[] dest, int offset, int i)
-    {
-        dest[offset + 0] = (byte) (i / (256 * 256 * 256));
-        dest[offset + 1] = (byte) (i / (256 * 256));
-        dest[offset + 2] = (byte) (i / (256));
-        dest[offset + 3] = (byte) (i);
-    }
-
-    public PBKDF2Parameters getParameters()
-    {
-        return parameters;
-    }
-
-    public void setParameters(PBKDF2Parameters parameters)
-    {
-        this.parameters = parameters;
-    }
-
-    public void setPseudoRandomFunction(PRF prf)
-    {
-        this.prf = prf;
-    }
-
-    /**
-     * Convenience client function. Convert supplied password with random 8-byte
-     * salt and 1000 iterations (default) using HMacSHA1. Assume that password is in
-     * ISO-8559-1 encoding. Output result as
-     * &quot;Salt:iteration-count:PBKDF2&quot; with binary data in hexadecimal
-     * encoding.
-     * <p>
-     * Example: Password &quot;password&quot; (without the quotes) leads to
-     * 48290A0B96C426C3:1000:973899B1D4AFEB3ED371060D0797E0EE0142BD04
-     * <p>
-     * The iteration count is configurable. In verification mode, the iteration
-     * count supplied in the candidate string must be no less than the
-     *
-     * @param args
-     *            Supply the password as argument.
-     * @throws IOException
-     *            apparently declared, but never thrown
-     * @throws NoSuchAlgorithmException
-     *            Thrown if underlying crypto library does not support
-     *            requested algorithms (SHA1PRNG, HmacSHA1).
-     */
-    public static void main(String[] args) throws IOException,
-            NoSuchAlgorithmException
-    {
-        String password = "password";
-        String candidate = null;
-        PBKDF2Formatter formatter = new PBKDF2HexFormatter();
-        int iterations = 1000;
-
-        if (args.length >= 2 && args[0].equals("-i"))
-        {
-            iterations = Integer.parseInt(args[1]);
-            args = Arrays.copyOfRange(args, 2, args.length);
-        }
-        if (args.length >= 1)
-        {
-            password = args[0];
-        }
-        if (args.length >= 2)
-        {
-            candidate = args[1];
-        }
-        if (candidate == null)
-        {
-            // Creation mode
-            SecureRandom sr = SecureRandom.getInstance("SHA1PRNG");
-            byte[] salt = new byte[8];
-            sr.nextBytes(salt);
-            PBKDF2Parameters p = new PBKDF2Parameters("HmacSHA1", "ISO-8859-1",
-                    salt, iterations);
-            PBKDF2Engine e = new PBKDF2Engine(p);
-            p.setDerivedKey(e.deriveKey(password));
-            candidate = formatter.toString(p);
-            System.out.println(candidate);
-        }
-        else
-        {
-            // Verification mode
-            PBKDF2Parameters p = new PBKDF2Parameters();
-            p.setHashAlgorithm("HmacSHA1");
-            p.setHashCharset("ISO-8859-1");
-            if (formatter.fromString(p, candidate))
-            {
-                throw new IllegalArgumentException(
-                        "Candidate data does not have correct format (\""
-                                + candidate + "\")");
-            }
-            PBKDF2Engine e = new PBKDF2Engine(p);
-            boolean verifyOK = (p.getIterationCount() >= iterations) && e.verifyKey(password);
-            System.out.println(verifyOK ? "OK" : "FAIL");
-            System.exit(verifyOK ? 0 : 1);
-        }
-    }
+public class PBKDF2Engine implements PBKDF2 {
+  protected PBKDF2Parameters parameters = null;
+  
+  protected PRF prf = null;
+  
+  public PBKDF2Engine() {}
+  
+  public PBKDF2Engine(PBKDF2Parameters paramPBKDF2Parameters) {}
+  
+  public PBKDF2Engine(PBKDF2Parameters paramPBKDF2Parameters, PRF paramPRF) {}
+  
+  public byte[] deriveKey(String paramString) {
+    return deriveKey(paramString, 0);
+  }
+  
+  public byte[] deriveKey(String paramString, int paramInt) {
+    null = null;
+    byte[] arrayOfByte = null;
+    String str = this.parameters.getHashCharset();
+    if (paramString == null)
+      paramString = ""; 
+    try {
+      if (str == null) {
+        arrayOfByte = paramString.getBytes();
+      } else {
+        arrayOfByte = paramString.getBytes(str);
+      } 
+    } catch (UnsupportedEncodingException unsupportedEncodingException) {
+      throw new RuntimeException(unsupportedEncodingException);
+    } 
+    assertPRF(arrayOfByte);
+    if (paramInt == 0)
+      paramInt = this.prf.getHLen(); 
+    return PBKDF2(this.prf, this.parameters.getSalt(), this.parameters.getIterationCount(), paramInt);
+  }
+  
+  public boolean verifyKey(String paramString1, String paramString2, String paramString3) {
+    byte[] arrayOfByte1 = deriveKey(paramString1, 0);
+    System.out.println("Inputkey is : " + arrayOfByte1);
+    String str1 = paramString1 + paramString2;
+    String str2 = "SHA-512";
+    byte[] arrayOfByte2 = new byte[100000];
+    System.out.println("strToEncode : " + str1);
+    try {
+      MessageDigest messageDigest = MessageDigest.getInstance(str2);
+      arrayOfByte2 = str1.getBytes(StandardCharsets.UTF_8);
+      System.out.println("Bytes are : " + arrayOfByte2);
+      byte[] arrayOfByte = messageDigest.digest(arrayOfByte2);
+      StringBuilder stringBuilder = new StringBuilder();
+      for (byte b : arrayOfByte) {
+        stringBuilder.append(String.format("%02x", new Object[] { Integer.valueOf(b & 0xFF) }));
+      } 
+      String str = stringBuilder.toString();
+      System.out.println("pwd is : " + str);
+      PBKDF2Parameters pBKDF2Parameters = new PBKDF2Parameters();
+      System.out.println("expected pwd is : " + paramString3);
+      return str.equals(paramString3);
+    } catch (NoSuchAlgorithmException noSuchAlgorithmException) {
+      System.out.println("Exception : " + noSuchAlgorithmException.toString());
+      return false;
+    } 
+  }
+  
+  protected void assertPRF(byte[] paramArrayOfbyte) {
+    if (this.prf == null)
+      this.prf = new MacBasedPRF(this.parameters.getHashAlgorithm()); 
+    this.prf.init(paramArrayOfbyte);
+  }
+  
+  public PRF getPseudoRandomFunction() {
+    return this.prf;
+  }
+  
+  protected byte[] PBKDF2(PRF paramPRF, String paramString, int paramInt1, int paramInt2) {
+    if (paramString == null)
+      paramString = ""; 
+    int i = paramPRF.getHLen();
+    int j = ceil(paramInt2, i);
+    int k = paramInt2 - (j - 1) * i;
+    byte[] arrayOfByte = new byte[j * i];
+    int m = 0;
+    for (byte b = 1; b <= j; b++) {
+      _F(arrayOfByte, m, paramPRF, paramString, paramInt1, b);
+      m += i;
+    } 
+    if (k < i) {
+      byte[] arrayOfByte1 = new byte[paramInt2];
+      System.arraycopy(arrayOfByte, 0, arrayOfByte1, 0, paramInt2);
+      return arrayOfByte1;
+    } 
+    return arrayOfByte;
+  }
+  
+  protected int ceil(int paramInt1, int paramInt2) {
+    byte b = 0;
+    if (paramInt1 % paramInt2 > 0)
+      b = 1; 
+    return paramInt1 / paramInt2 + b;
+  }
+  
+  protected void _F(byte[] paramArrayOfbyte, int paramInt1, PRF paramPRF, String paramString, int paramInt2, int paramInt3) {
+    int i = paramPRF.getHLen();
+    byte[] arrayOfByte1 = new byte[i];
+    byte[] arrayOfByte2 = new byte[(paramString.getBytes()).length + 4];
+    System.arraycopy(paramString.getBytes(), 0, arrayOfByte2, 0, paramString.length());
+    INT(arrayOfByte2, paramString.length(), paramInt3);
+    for (byte b = 0; b < paramInt2; b++) {
+      arrayOfByte2 = paramPRF.doFinal(arrayOfByte2);
+      xor(arrayOfByte1, arrayOfByte2);
+    } 
+    System.arraycopy(arrayOfByte1, 0, paramArrayOfbyte, paramInt1, i);
+  }
+  
+  protected void xor(byte[] paramArrayOfbyte1, byte[] paramArrayOfbyte2) {
+    for (byte b = 0; b < paramArrayOfbyte1.length; b++)
+      paramArrayOfbyte1[b] = (byte)(paramArrayOfbyte1[b] ^ paramArrayOfbyte2[b]); 
+  }
+  
+  protected void INT(byte[] paramArrayOfbyte, int paramInt1, int paramInt2) {
+    paramArrayOfbyte[paramInt1 + 0] = (byte)(paramInt2 / 16777216);
+    paramArrayOfbyte[paramInt1 + 1] = (byte)(paramInt2 / 65536);
+    paramArrayOfbyte[paramInt1 + 2] = (byte)(paramInt2 / 256);
+    paramArrayOfbyte[paramInt1 + 3] = (byte)paramInt2;
+  }
+  
+  public PBKDF2Parameters getParameters() {
+    return this.parameters;
+  }
+  
+  public void setParameters(PBKDF2Parameters paramPBKDF2Parameters) {
+    this.parameters = paramPBKDF2Parameters;
+  }
+  
+  public void setPseudoRandomFunction(PRF paramPRF) {
+    this.prf = paramPRF;
+  }
+  
+  public static void main(String[] paramArrayOfString) throws IOException, NoSuchAlgorithmException {
+    String str1 = "password";
+    String str2 = null;
+    PBKDF2HexFormatter pBKDF2HexFormatter = new PBKDF2HexFormatter();
+    if (paramArrayOfString.length >= 1)
+      str1 = paramArrayOfString[0]; 
+    if (paramArrayOfString.length >= 2)
+      str2 = paramArrayOfString[1]; 
+    PBKDF2Parameters pBKDF2Parameters = new PBKDF2Parameters();
+    pBKDF2Parameters.setHashAlgorithm("HmacSHA512");
+    pBKDF2Parameters.setHashCharset("UTF-8");
+    if (pBKDF2HexFormatter.fromString(pBKDF2Parameters, str2))
+      throw new IllegalArgumentException("Candidate data does not have correct format (\"" + str2 + "\")"); 
+    PBKDF2Engine pBKDF2Engine = new PBKDF2Engine(pBKDF2Parameters);
+    boolean bool = pBKDF2Engine.verifyKey(str1, pBKDF2Parameters.getSalt(), pBKDF2Parameters.getDerivedKey());
+    System.out.println(bool ? "OK" : "FAIL");
+    System.exit(bool ? 0 : 1);
+  }
 }
